@@ -174,12 +174,6 @@ class Parser : public CodeCompletionHandler {
   /// \brief Identifier for "rel_align_value"
   IdentifierInfo *Ident_rel_align_value;
 
-  /// \brief Identifier for "dynamic_bounds_cast"
-  IdentifierInfo *Ident_dynamic_bounds_cast;
-  
-  /// \brief Identifier for "assume_bounds_cast"
-  IdentifierInfo *Ident_assume_bounds_cast;
-
   enum CheckedScopeKind {
     /// '{'
     CSK_None,
@@ -1696,7 +1690,7 @@ private:
 
   void SkipInvalidBoundsExpr(Token &T);
 
-  ExprResult ParseBoundsCastExpression(IdentifierInfo &Ident, SourceLocation &ILoc);
+  ExprResult ParseBoundsCastExpr();
 
   ExprResult ParseBoundsExpression();
   ExprResult ParseInteropTypeAnnotation(const Declarator &D, bool IsReturn=false);

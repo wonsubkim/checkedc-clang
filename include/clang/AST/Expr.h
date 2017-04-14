@@ -3087,31 +3087,28 @@ class BoundsCastExpr final
       private llvm::TrailingObjects<BoundsCastExpr, CXXBaseSpecifier *> {
   SourceLocation LPLoc;
   SourceLocation RPLoc;
+  SourceRange AngleBrackets;
   
 public:  
-  enum Kind {
-    Invalid = 0,
-    Dynamic = 1,
-    Assume = 2,
-    MaxBoundsCastKind = Assume
-  };
-
   BoundsCastExpr(QualType exprTy, ExprValueKind vk, CastKind kind, Expr *op,
                  unsigned PathSize, TypeSourceInfo *writtenTy, SourceLocation l,
-                 SourceLocation r, BoundsExpr *bounds, Kind boundsCastKind)
+                 SourceLocation r, SourceRange AngleBrackets,
+                 BoundsExpr *RangeBounds)
       : ExplicitCastExpr(BoundsCastExprClass, exprTy, vk, kind, op, PathSize,
                          writtenTy),
-        LPLoc(l), RPLoc(r), BoundsCastKind(boundsCastKind) {
-    setBoundsExpr(bounds);
+        LPLoc(l), RPLoc(r), AngleBrackets(AngleBrackets) {
+    setBoundsExpr(RangeBounds);
   }
 
   explicit BoundsCastExpr(EmptyShell Shell, unsigned PathSize)
       : ExplicitCastExpr(BoundsCastExprClass, Shell, PathSize) {}
 
-  static BoundsCastExpr *
-  Create(const ASTContext &Context, QualType T, ExprValueKind VK, CastKind K,
-         Expr *Op, const CXXCastPath *BasePath, TypeSourceInfo *WrittenTy,
-         SourceLocation L, SourceLocation R, BoundsExpr *bounds, Kind boundsCastKind);
+  static BoundsCastExpr *Create(const ASTContext &Context, QualType T,
+                                ExprValueKind VK, CastKind K, Expr *Op,
+                                const CXXCastPath *BasePath,
+                                TypeSourceInfo *WrittenTy, SourceLocation L,
+                                SourceLocation R, SourceRange AngleBrackets,
+                                BoundsExpr *RangeBounds);
 
   static BoundsCastExpr *CreateEmpty(const ASTContext &Context,
                                      unsigned PathSize);
@@ -3126,9 +3123,7 @@ public:
   SourceLocation getLocEnd() const LLVM_READONLY {
     return getSubExpr()->getLocEnd();
   }
-
-  Kind getBoundsCastKind() const { return BoundsCastKind; }
-  void setBoundsCastKind(Kind kind) { BoundsCastKind = kind; }
+  SourceRange getAngleBrackets() const LLVM_READONLY { return AngleBrackets; }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == BoundsCastExprClass;
@@ -3136,8 +3131,6 @@ public:
 
   friend TrailingObjects;
   friend class CastExpr;
-private:
-  Kind BoundsCastKind;
 };
 
 /// \brief A builtin binary operation expression such as "x + y" or "x <= y".

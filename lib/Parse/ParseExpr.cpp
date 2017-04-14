@@ -879,15 +879,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     IdentifierInfo &II = *Tok.getIdentifierInfo();
     SourceLocation ILoc = ConsumeToken();
 
-    // Parsing CheckedC bounds cast expression
-    if (getLangOpts().CheckedC) {
-      if (&II == Ident_dynamic_bounds_cast || &II == Ident_assume_bounds_cast) {
-        if (Tok.is(tok::less))
-          Res = ParseBoundsCastExpression(II, ILoc);
-        break;
-      }
-    }
-
     // Support 'Class.property' and 'super.property' notation.
     if (getLangOpts().ObjC1 && Tok.is(tok::period) &&
         (Actions.getTypeName(II, ILoc, getCurScope()) ||
@@ -1128,6 +1119,10 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_reinterpret_cast:
   case tok::kw_static_cast:
     Res = ParseCXXCasts();
+    break;
+  case tok::kw__Dynamic_bounds_cast:
+  case tok::kw__Assume_bounds_cast:
+    Res = ParseBoundsCastExpr();
     break;
   case tok::kw_typeid:
     Res = ParseCXXTypeid();
@@ -3016,47 +3011,58 @@ bool Parser::ParseRelativeBoundsClause(ExprResult &Expr) {
   return IsError;
 }
 
-ExprResult Parser::ParseBoundsCastExpression(IdentifierInfo &Ident,
-                                             SourceLocation &ILoc) {
-  ExprResult Result(true);
-  BoundsCastExpr::Kind kind;
-  if (&Ident == Ident_dynamic_bounds_cast)
-    kind = BoundsCastExpr::Kind::Dynamic;
-  else if (&Ident == Ident_assume_bounds_cast)
-    kind = BoundsCastExpr::Kind::Assume;
-  else
-    kind = BoundsCastExpr::Kind::Invalid;
+ExprResult Parser::ParseBoundsCastExpr() {
+  tok::TokenKind Kind = Tok.getKind();
+  const char *CastName = nullptr; // For error messages
 
-  if (ExpectAndConsume(tok::less, diag::err_expected_less_after,
-                       Ident.getNameStart()))
-    return ExprError();
-
-  TypeResult Ty = ParseTypeName();
-
-  if (Ty.isInvalid()) {
-    SkipUntil(tok::greater, StopAtSemi);
-    return ExprError();
+  switch (Kind) {
+  default:
+    llvm_unreachable("Unknown checkedc bounds cast!");
+  case tok::kw__Dynamic_bounds_cast:
+    CastName = "_Dynamic_bounds_cast";
+    break;
+  case tok::kw__Assume_bounds_cast:
+    CastName = "_Assume_bounds_cast";
+    break;
   }
 
-  // if there is rel, parsing it.
+  SourceLocation OpLoc = ConsumeToken();
+  SourceLocation LAngleBracketLoc = Tok.getLocation();
+
+  // Parsing <T, relative_align>
+  if (ExpectAndConsume(tok::less, diag::err_expected_less_after, CastName))
+    return ExprError();
+
+  // Parse the common declaration-specifiers piece.
+  DeclSpec DS(AttrFactory);
+  ParseSpecifierQualifierList(DS);
+
+  // Parse the abstract-declarator, if present.
+  Declarator DeclaratorInfo(DS, Declarator::TypeNameContext);
+  ParseDeclarator(DeclaratorInfo);
+#if 0
+  // optional - bounds_cast<T , rel_align(S)/rel_align_value(const_expr)>(...)
+  // optional comma
   if (Tok.is(tok::comma)) {
+    // relative alignment clause
     ConsumeToken();
-    //...
+    ParseRelativeBoundsClause();
   }
+#endif
 
-  SourceLocation EndLoc = Tok.getLocation();
+  SourceLocation RAngleBracketLoc = Tok.getLocation();
+
   if (ExpectAndConsume(tok::greater))
-    return ExprError(Diag(EndLoc, diag::note_matching) << tok::less);
+    return ExprError(Diag(LAngleBracketLoc, diag::note_matching) << tok::less);
 
   SourceLocation LParenLoc, RParenLoc;
   BalancedDelimiterTracker T(*this, tok::l_paren);
 
-  if (T.expectAndConsume(diag::err_expected_lparen_after, Ident.getNameStart()))
+  if (T.expectAndConsume(diag::err_expected_lparen_after, CastName))
     return ExprError();
-  LParenLoc = T.getOpenLocation();
 
   // Parsing e1, e2, e3
-  ExprResult E1(true), E2(true), E3(true);
+  ExprResult E1(true), E2(true), E3(true), Result(true);
 
   E1 = ParseCastExpression(true);
   if (E1.isInvalid()) {
@@ -3088,11 +3094,13 @@ ExprResult Parser::ParseBoundsCastExpression(IdentifierInfo &Ident,
 
   // Match the ')'.
   T.consumeClose();
-  RParenLoc = T.getCloseLocation();
-  if (!E1.isInvalid())
-    Result =
-        Actions.ActOnBoundsCastExpr(getCurScope(), ILoc, Ty.get(), RParenLoc,
-                                    E1.get(), E2.get(), E3.get(), kind);
+
+  if (!DeclaratorInfo.isInvalidType())
+    Result = Actions.ActOnBoundsCastExpr(
+        OpLoc, Kind, LAngleBracketLoc, DeclaratorInfo, RAngleBracketLoc,
+        T.getOpenLocation(), E1.get(), E2.get(), E3.get(),
+        T.getCloseLocation());
+
   return Result;
 }
 

@@ -1904,10 +1904,16 @@ void StmtPrinter::VisitInteropTypeBoundsAnnotation(
 }
 
 void StmtPrinter::VisitBoundsCastExpr(BoundsCastExpr *Node) {
-  if (Node->getBoundsCastKind() == BoundsCastExpr::Kind::Dynamic)
+  switch (Node->getCastKind()) {
+  case CK_DynamicBounds:
     OS << "_Dynamic_bounds_cast<";
-  else if (Node->getBoundsCastKind() == BoundsCastExpr::Kind::Assume)
+    break;
+  case CK_AssumeBounds:
     OS << "_Assume_bounds_cast<";
+    break;
+  default:
+    llvm_unreachable("unexpected cast kind for checkedc bounds cast expr");
+  }
   Node->getTypeAsWritten().print(OS, Policy);
   OS << '>';
   PrintExpr(Node->getSubExpr());

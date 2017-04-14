@@ -342,7 +342,6 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
       case CK_ObjCObjectLValueCast:
       case CK_ZeroToOCLEvent:
       case CK_IntToOCLSampler:
-      case CK_PointerBounds:
       case CK_LValueBitCast: {
         // Delegate to SValBuilder to process.
         SVal V = state->getSVal(Ex, LCtx);
@@ -372,7 +371,9 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
         continue;
       }
       // Handle C++ dyn_cast.
-      case CK_Dynamic: {
+      case CK_Dynamic:
+      case CK_DynamicBounds:
+      case CK_AssumeBounds: {
         SVal val = state->getSVal(Ex, LCtx);
 
         // Compute the type of the result.

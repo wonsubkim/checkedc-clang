@@ -1541,6 +1541,8 @@ bool CastExpr::CastConsistency() const {
            getSubExpr()->getType()->getPointeeType().getAddressSpace());
   // These should not have an inheritance path.
   case CK_Dynamic:
+  case CK_DynamicBounds:
+  case CK_AssumeBounds:
   case CK_ToUnion:
   case CK_ArrayToPointerDecay:
   case CK_NullToMemberPointer:
@@ -1575,7 +1577,6 @@ bool CastExpr::CastConsistency() const {
 
   case CK_Dependent:
   case CK_LValueToRValue:
-  case CK_PointerBounds:
   case CK_NoOp:
   case CK_AtomicToNonAtomic:
   case CK_NonAtomicToAtomic:
@@ -1691,17 +1692,17 @@ CStyleCastExpr *CStyleCastExpr::CreateEmpty(const ASTContext &C,
   return new (Buffer) CStyleCastExpr(EmptyShell(), PathSize);
 }
 
-BoundsCastExpr *BoundsCastExpr::Create(const ASTContext &C, QualType T,
-                                       ExprValueKind VK, CastKind K, Expr *Op,
-                                       const CXXCastPath *BasePath,
-                                       TypeSourceInfo *WrittenTy,
-                                       SourceLocation L, SourceLocation R,
-                                       BoundsExpr *bounds, Kind boundsCastKind) {
+BoundsCastExpr *
+BoundsCastExpr::Create(const ASTContext &C, QualType T, ExprValueKind VK,
+                       CastKind K, Expr *Op, const CXXCastPath *BasePath,
+                       TypeSourceInfo *WrittenTy, SourceLocation L,
+                       SourceLocation R, SourceRange AngleBrackets,
+                       BoundsExpr *RangeBounds) {
   unsigned PathSize = (BasePath ? BasePath->size() : 0);
   void *Buffer = C.Allocate(totalSizeToAlloc<CXXBaseSpecifier *>(PathSize));
   BoundsCastExpr *E =
       new (Buffer) BoundsCastExpr(T, VK, K, Op, PathSize, WrittenTy, L, R,
-                                  bounds, boundsCastKind);
+                                  AngleBrackets, RangeBounds);
   if (PathSize)
     std::uninitialized_copy_n(BasePath->data(), BasePath->size(),
                               E->getTrailingObjects<CXXBaseSpecifier *>());

@@ -82,6 +82,7 @@ namespace {
     void CheckDynamicCast();
     void CheckCXXCStyleCast(bool FunctionalCast, bool ListInitialization);
     void CheckCStyleCast();
+    void CheckBoundsCast(BoundsExpr *Bounds);
 
     /// Complete an apparently-successful cast operation that yields
     /// the given expression.
@@ -207,7 +208,8 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
                                         SourceRange OpRange,
                                         unsigned &msg,
                                         CastKind &Kind);
-
+static TryCastResult TryBoundsCast(Sema &Self, ExprResult &SrcExpr,
+                                   QualType DestType, CastKind &Kind);
 
 /// ActOnCXXNamedCast - Parse {dynamic,static,reinterpret,const}_cast's.
 ExprResult
@@ -303,6 +305,99 @@ Sema::BuildCXXNamedCast(SourceLocation OpLoc, tok::TokenKind Kind,
                                                  AngleBrackets));
   }
   }
+}
+
+ExprResult Sema::ActOnBoundsCastExpr(
+    SourceLocation OpLoc, tok::TokenKind Kind, SourceLocation LAngleBracketLoc,
+    Declarator &D, SourceLocation RAngleBracketLoc, SourceLocation LParenLoc,
+    Expr *E1, Expr *E2, Expr *E3, SourceLocation RParenLoc) {
+  assert(!D.isInvalidType());
+
+  TypeSourceInfo *TInfo = GetTypeForDeclaratorCast(D, E1->getType());
+  if (D.isInvalidType())
+    return ExprError();
+
+  ExprResult SubExpr = CorrectDelayedTyposInExpr(E1);
+  if (!SubExpr.isUsable())
+    return ExprError();
+
+  ExprResult Lower = CorrectDelayedTyposInExpr(E2);
+  ExprResult Upper = CorrectDelayedTyposInExpr(E3);
+
+  if (Lower.isInvalid() || Upper.isInvalid())
+    return ExprError();
+
+  ExprResult BoundExpr = GenerateBoundsExpr(TInfo, Lower.get(), Upper.get());
+  BoundsExpr *Bounds = nullptr;
+  if (!BoundExpr.isInvalid())
+    Bounds = dyn_cast<BoundsExpr>(BoundExpr.get());
+
+  return BuildBoundsCastExpr(OpLoc, Kind, TInfo, SubExpr.get(), Bounds,
+                             SourceRange(LAngleBracketLoc, RAngleBracketLoc),
+                             SourceRange(LParenLoc, RParenLoc));
+}
+
+ExprResult Sema::BuildBoundsCastExpr(SourceLocation OpLoc, tok::TokenKind Kind,
+                                     TypeSourceInfo *DestTInfo, Expr *E,
+                                     BoundsExpr *Bounds,
+                                     SourceRange AngleBrackets,
+                                     SourceRange Parens) {
+  ExprResult Ex = E;
+  QualType DestType = DestTInfo->getType();
+
+  // If the type is dependent, we won't do the semantic analysis now.
+  bool TypeDependent =
+      DestType->isDependentType() || Ex.get()->isTypeDependent();
+
+  CastOperation Op(*this, DestType, E);
+  Op.OpRange = SourceRange(OpLoc, Parens.getEnd());
+  Op.DestRange = AngleBrackets;
+
+  if (Kind == tok::kw__Dynamic_bounds_cast) {
+    Op.Kind = CK_DynamicBounds;
+  } else if (Kind == tok::kw__Assume_bounds_cast) {
+    Op.Kind = CK_AssumeBounds;
+  } else
+    llvm_unreachable("Unknown checkedc bounds cast!");
+
+  if (!TypeDependent) {
+    Op.CheckBoundsCast(Bounds);
+    if (Op.SrcExpr.isInvalid())
+      return ExprError();
+  }
+
+  return Op.complete(BoundsCastExpr::Create(
+      Context, Op.ResultType, Op.ValueKind, Op.Kind, Op.SrcExpr.get(),
+      &Op.BasePath, DestTInfo, OpLoc, Parens.getEnd(), AngleBrackets, Bounds));
+}
+
+ExprResult Sema::GenerateBoundsExpr(TypeSourceInfo *TInfo, Expr *E2, Expr *E3) {
+  QualType DestType = TInfo->getType();
+  ExprResult Result(true);
+  ExprResult Lower = E2;
+  ExprResult Upper = E3;
+
+  if (!Lower.isUsable() && !Upper.isUsable()) {
+    // array_ptr<T> can have no bounds
+  } else if (Lower.isUsable() && !Upper.isUsable()) {
+    if (DestType->isCheckedPointerArrayType()) {
+      // bounds_cast<T>(e1, e2) -> T e1 : count(e2), where T is array_ptr type
+      Expr *CountExpr = Lower.get();
+      Result =
+          ActOnCountBoundsExpr(SourceLocation(), BoundsExpr::Kind::ElementCount,
+                               CountExpr, SourceLocation());
+    } else
+      Result = CreateInvalidBoundsExpr();
+  } else if (Lower.isUsable() && Upper.isUsable()) {
+    if (DestType->isCheckedPointerArrayType()) {
+      // bounds_cast<T>(e1, e2, e3) -> T e1 : bounds(e2, e3), where T is
+      // array_ptr type
+      Result = ActOnRangeBoundsExpr(SourceLocation(), Lower.get(), Upper.get(),
+                                    SourceLocation());
+    } else
+      Result = CreateInvalidBoundsExpr();
+  }
+  return Result;
 }
 
 /// Try to diagnose a failed overloaded cast.  Returns true if
@@ -740,6 +835,49 @@ void CastOperation::CheckConstCast() {
       && msg != 0) {
     Self.Diag(OpRange.getBegin(), msg) << CT_Const
       << SrcExpr.get()->getType() << DestType << OpRange;
+    SrcExpr = ExprError();
+  }
+}
+
+/// CheckBoundsCast - Check checked-c bounds cast
+/// TODO
+void CastOperation::CheckBoundsCast(BoundsExpr *Bounds) {
+  if (ValueKind == VK_RValue)
+    SrcExpr = Self.DefaultFunctionArrayLvalueConversion(SrcExpr.get());
+  else if (isPlaceholder())
+    SrcExpr = Self.CheckPlaceholderExpr(SrcExpr.get());
+  if (SrcExpr.isInvalid()) // if conversion failed, don't report another error
+    return;
+
+  // Check if bounds cast operator has bounds compatible with its type
+  // CheckBoundsDeclarations will check validity check of bounds
+  // ptr<T> - No bounds information
+  // array_ptr<int> - bounds information
+  // otherwise, No bounds information
+  if (Bounds && Bounds->isInvalid()) {
+    Self.Diag(OpRange.getBegin(), diag::err_invalid_bounds_casting);
+    return;
+  }
+
+  // Checked C - No C-style casts to unchecked pointer/array type or variadic
+  // type in a checked block.
+  if (Self.getCurScope()->isCheckedScope()) {
+    unsigned TypeKind = 0;
+    bool HasUncheckedType = DestType->hasUncheckedType(TypeKind);
+    bool HasVariadicType = DestType->hasVariadicType();
+    if (HasUncheckedType || HasVariadicType) {
+      if (HasUncheckedType) {
+        Self.Diag(OpRange.getBegin(), diag::err_checked_scope_type_for_casting)
+            << TypeKind;
+      } else {
+        Self.Diag(OpRange.getBegin(),
+                  diag::err_checked_scope_no_variable_args_for_casting);
+      }
+      SrcExpr = ExprError();
+      return;
+    }
+  }
+  if (TryBoundsCast(Self, SrcExpr, DestType, Kind) != TC_Success) {
     SrcExpr = ExprError();
   }
 }
@@ -1652,6 +1790,16 @@ static TryCastResult TryConstCast(Sema &Self, ExprResult &SrcExpr,
     SrcExpr = Self.CreateMaterializeTemporaryExpr(SrcType, SrcExpr.get(),
                                                   /*IsLValueReference*/ false);
 
+  return TC_Success;
+}
+
+/// TryBoundsCast - See if a {dynamic|assume}_bounds_cast from source to
+/// destination is allowed, and perform it if it is.
+/// TODO
+static TryCastResult TryBoundsCast(Sema &Self, ExprResult &SrcExpr,
+                                   QualType DestType, CastKind &Kind) {
+  // TODO - for valid bounds casting, check validity
+  // If necessary, pass proper information to check validity
   return TC_Success;
 }
 
@@ -2635,25 +2783,7 @@ ExprResult Sema::BuildCStyleCastExpr(SourceLocation LPLoc,
                               &Op.BasePath, CastTypeInfo, LPLoc, RPLoc));
 }
 
-ExprResult Sema::BuildBoundsCastExpr(SourceLocation LPLoc,
-                                     TypeSourceInfo *CastTypeInfo,
-                                     SourceLocation RPLoc, Expr *E1,
-                                     BoundsExpr *bounds,
-                                     BoundsCastExpr::Kind kind) {
 
-  CastOperation Op(*this, CastTypeInfo->getType(), E1);
-  Op.DestRange = CastTypeInfo->getTypeLoc().getSourceRange();
-  Op.OpRange = SourceRange(LPLoc, E1->getLocEnd());
-
-  Op.Kind = CastKind::CK_PointerBounds;
-
-  if (Op.SrcExpr.isInvalid())
-    return ExprError();
-
-  return Op.complete(BoundsCastExpr::Create(
-      Context, Op.ResultType, Op.ValueKind, Op.Kind, Op.SrcExpr.get(),
-      &Op.BasePath, CastTypeInfo, LPLoc, RPLoc, bounds, kind));
-}
 
 ExprResult Sema::BuildCXXFunctionalCastExpr(TypeSourceInfo *CastTypeInfo,
                                             SourceLocation LPLoc,

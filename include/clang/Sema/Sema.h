@@ -4288,17 +4288,19 @@ public:
                                                     SourceLocation BoundsKWLoc,
                                                     SourceLocation RParenLoc);
 
-  ExprResult ActOnBoundsCastExpr(Scope *S, SourceLocation LParenLoc,
-                                 ParsedType D, SourceLocation RParenLoc,
-                                 Expr *E1, Expr *E2, Expr *E3,
-                                 BoundsCastExpr::Kind kind);
+  /// Parse {dynamic/assume}_bounds_cast's.
+  ExprResult ActOnBoundsCastExpr(SourceLocation OpLoc, tok::TokenKind Kind,
+                                 SourceLocation LAngleBracketLoc, Declarator &D,
+                                 SourceLocation RAngleBracketLoc,
+                                 SourceLocation LParenLoc, Expr *E1, Expr *E2,
+                                 Expr *E3, SourceLocation RParenLoc);
 
-  ExprResult GenerateBoundsExpr(Expr *E2, Expr *E3);
+  ExprResult GenerateBoundsExpr(TypeSourceInfo *TInfo, Expr *E2, Expr *E3);
 
-  ExprResult BuildBoundsCastExpr(SourceLocation LParenLoc, TypeSourceInfo *Ty,
-                                 SourceLocation RParenLoc, Expr *BaseExpr,
-                                 BoundsExpr *bounds,
-                                 BoundsCastExpr::Kind kind);
+  ExprResult BuildBoundsCastExpr(SourceLocation OpLoc, tok::TokenKind Kind,
+                                 TypeSourceInfo *Ty, Expr *E,
+                                 BoundsExpr *Bounds, SourceRange AngleBrackets,
+                                 SourceRange Parens);
 
   bool DiagnoseBoundsDeclType(QualType Ty, DeclaratorDecl *D,
                               BoundsExpr *Expr, bool IsReturnBounds);

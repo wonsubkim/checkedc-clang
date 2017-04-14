@@ -556,7 +556,6 @@ namespace {
     BoundsExpr *RValueCastBounds(CastKind CK, Expr *E) {
       switch (CK) {
         case CastKind::CK_BitCast:
-        case CastKind::CK_PointerBounds:
         case CastKind::CK_NoOp:
         case CastKind::CK_NullToPointer:
         // Truncation or widening of a value does not affect its bounds.
@@ -565,6 +564,8 @@ namespace {
         case CastKind::CK_IntegralCast:
         case CastKind::CK_IntegralToBoolean:
         case CastKind::CK_BooleanToSignedIntegral:
+        case CastKind::CK_DynamicBounds:
+        case CastKind::CK_AssumeBounds:
           return RValueBounds(E);
         case CastKind::CK_LValueToRValue:
           return LValueTargetBounds(E);
@@ -609,15 +610,22 @@ namespace {
             llvm_unreachable("unexpected cast failure");
             return CreateBoundsNone();
           }
-          Expr *subExpr = CE->getSubExpr();
           BoundsExpr *Bounds = CE->getBoundsExpr();
-          QualType QT = subExpr->getType();
-	  Expr *Base = subExpr;
-          if (subExpr->getStmtClass() != clang::Stmt::CallExprClass)
-	    Base=CreateImplicitCast(QT, CastKind::CK_LValueToRValue, subExpr);
-          Bounds = ExpandToRange(Base, Bounds);
-          CE->setBoundsExpr(Bounds);
-          return Bounds;
+          Expr *Base = CE->getSubExpr();
+          // BoundsCastExpr produces bounds itself
+          // If BoundsCastExpr has its bounds, it pass that
+          // Otherwise, it finds out subexpression bounds
+          if (!Bounds) {
+            QualType DestType = CE->getType();
+            if (DestType->isCheckedPointerPtrType()) {
+              if (DestType->isFunctionPointerType())
+                return CreateBoundsNone();
+              return CreateSingleElementBounds(Base);
+            } else {
+              return RValueCastBounds(CE->getCastKind(), CE->getSubExpr());
+            }
+          } else
+            return ExpandToRange(Base, Bounds);
         }
         case Expr::ImplicitCastExprClass:
         case Expr::CStyleCastExprClass: {
@@ -832,7 +840,8 @@ namespace {
         NeedsBoundsCheck = true;
         LValueBounds = S.InferLValueBounds(E);
         if (LValueBounds->isNone()) {
-          S.Diag(E->getLocStart(), diag::err_expected_bounds) << E->getSourceRange();
+          S.Diag(E->getLocStart(), diag::err_expected_bounds)
+              << E->getSourceRange();
           LValueBounds = S.CreateInvalidBoundsExpr();
         }
         if (UnaryOperator *UO = dyn_cast<UnaryOperator>(Deref)) {
@@ -866,7 +875,8 @@ namespace {
       if (Base->getType()->isCheckedPointerArrayType()){
         BoundsExpr *Bounds = S.InferRValueBounds(Base);
         if (Bounds->isNone()) {
-          S.Diag(Base->getLocStart(), diag::err_expected_bounds) << Base->getSourceRange();
+          S.Diag(Base->getLocStart(), diag::err_expected_bounds)
+              << Base->getSourceRange();
           Bounds = S.CreateInvalidBoundsExpr();
         }
         E->setBoundsExpr(Bounds);
@@ -903,8 +913,9 @@ namespace {
           else
             RHSBounds = S.InferRValueBounds(RHS);
           if (RHSBounds->isNone()) {
-             S.Diag(RHS->getLocStart(), diag::err_expected_bounds_for_assignment) << RHS->getSourceRange();
-             RHSBounds = S.CreateInvalidBoundsExpr();
+            S.Diag(RHS->getLocStart(), diag::err_expected_bounds_for_assignment)
+                << RHS->getSourceRange();
+            RHSBounds = S.CreateInvalidBoundsExpr();
           }
         }
       }
@@ -939,12 +950,14 @@ namespace {
         BoundsExpr *SrcBounds =
           S.InferRValueBounds(E->getSubExpr());
         if (SrcBounds->isNone()) {
-          S.Diag(E->getSubExpr()->getLocStart(), diag::err_expected_bounds_for_ptr_cast)  << E->getSubExpr()->getSourceRange();
+          S.Diag(E->getSubExpr()->getLocStart(),
+                 diag::err_expected_bounds_for_ptr_cast)
+              << E->getSubExpr()->getSourceRange();
           SrcBounds = S.CreateInvalidBoundsExpr();
         }
         assert(SrcBounds);
-        assert(!E->getBoundsExpr());
-        E->setBoundsExpr(SrcBounds);
+        if (!E->getBoundsExpr())
+          E->setBoundsExpr(SrcBounds);
 
         if (DumpBounds)
           DumpExpression(llvm::outs(), E);

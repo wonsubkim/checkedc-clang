@@ -999,7 +999,6 @@ static bool rewriteToNumericBoxedExpression(const ObjCMessageExpr *Msg,
   if (const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(Arg)) {
     switch (ICE->getCastKind()) {
     case CK_LValueToRValue:
-    case CK_PointerBounds:
     case CK_NoOp:
     case CK_UserDefinedConversion:
       break;
@@ -1082,6 +1081,9 @@ static bool rewriteToNumericBoxedExpression(const ObjCMessageExpr *Msg,
 
     case CK_BooleanToSignedIntegral:
       llvm_unreachable("OpenCL-specific cast in Objective-C?");
+    case CK_DynamicBounds:
+    case CK_AssumeBounds:
+      llvm_unreachable("Checked-C cast in Objective-C?");
     }
   }
 

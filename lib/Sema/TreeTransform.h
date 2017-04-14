@@ -2195,12 +2195,15 @@ public:
                                          SubExpr);
   }
 
-  ExprResult RebuildBoundsCastExpr(SourceLocation LParenLoc,
-                                   TypeSourceInfo *TInfo,
-                                   SourceLocation RParenLoc, Expr *SubExpr,
-                                   BoundsExpr *bounds, BoundsCastExpr::Kind kind) {
-    return getSema().BuildBoundsCastExpr(LParenLoc, TInfo, RParenLoc, SubExpr,
-                                         bounds, kind);
+  ExprResult RebuildBoundsCastExpr(
+      SourceLocation OpLoc, CastKind CK, SourceLocation LAngleLoc,
+      TypeSourceInfo *TInfo, SourceLocation RAngleLoc, SourceLocation LParenLoc,
+      Expr *SubExpr, BoundsExpr *Bounds, SourceLocation RParenLoc) {
+    return getSema().BuildBoundsCastExpr(
+        OpLoc, (CK == CK_DynamicBounds ? tok::kw__Dynamic_bounds_cast
+                                       : tok::kw__Assume_bounds_cast),
+        TInfo, SubExpr, Bounds, SourceRange(LAngleLoc, RAngleLoc),
+        SourceRange(LParenLoc, RParenLoc));
   }
 
   /// \brief Build a new compound literal expression.
@@ -11572,27 +11575,28 @@ TreeTransform<Derived>::TransformInteropTypeBoundsAnnotation(
                                        E->getRParenLoc());
 }
 
-template <typename Derived>
-ExprResult TreeTransform<Derived>::TransformBoundsCastExpr(BoundsCastExpr *E) {
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformBoundsCastExpr(BoundsCastExpr *E) {
   TypeSourceInfo *Type = getDerived().TransformType(E->getTypeInfoAsWritten());
   if (!Type)
     return ExprError();
 
-  ExprResult SubExpr = getDerived().TransformExpr(E->getSubExprAsWritten());
+  ExprResult SubExpr
+    = getDerived().TransformExpr(E->getSubExprAsWritten());
   if (SubExpr.isInvalid())
     return ExprError();
 
-  BoundsExpr *bounds = E->getBoundsExpr();
-
-  BoundsCastExpr::Kind kind = E->getBoundsCastKind();
-
-  if (!getDerived().AlwaysRebuild() && Type == E->getTypeInfoAsWritten() &&
+  if (!getDerived().AlwaysRebuild() &&
+      Type == E->getTypeInfoAsWritten() &&
       SubExpr.get() == E->getSubExpr())
     return E;
-
   return getDerived().RebuildBoundsCastExpr(
-      E->getLParenLoc(), Type, E->getRParenLoc(), SubExpr.get(),
-      bounds, kind);
+      E->getLParenLoc(), E->getCastKind(), E->getAngleBrackets().getBegin(),
+      Type, E->getAngleBrackets().getEnd(),
+      // FIXME. this should be '(' location
+      E->getAngleBrackets().getEnd(), SubExpr.get(), E->getBoundsExpr(),
+      E->getRParenLoc());
 }
 
 template<typename Derived>

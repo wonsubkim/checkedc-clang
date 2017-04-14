@@ -8945,6 +8945,9 @@ def err_bounds_type_annotation_lost_checking : Error<
 
   def err_checked_scope_no_variadic_func_for_expression : Error<
     "cannot use a variable arguments function in a checked scope or function">;
+
+  def err_invalid_bounds_casting : Error<
+    "invalid bounds casting with incompatible type">;
 } // end of Checked C Category
 
 } // end of sema component.
